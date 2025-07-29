@@ -1,0 +1,21 @@
+# 게임 상수 (WIDTH, HEIGHT, FPS, COLORS 등)
+
+# config.py
+# 게임 상수 (Pygame과 동일하게 유지)
+WIDTH = 480
+HEIGHT = 640
+FPS = 60 
+
+# Pyxel 색상 팔레트 (RGB 대신 0-15 인덱스)
+COLOR_BLACK = 0
+COLOR_WHITE = 7
+COLOR_RED = 8
+COLOR_GREEN = 11
+COLOR_BLUE = 6
+COLOR_YELLOW = 9
+COLOR_LIGHT_GREY = 13
+COLOR_ORANGE = 10
+COLOR_PURPLE = 5
+COLOR_CYAN = 12
+COLOR_BOSS = 8
+COLOR_ULTIMATE = 10 # 궁극기 게이지 색상
