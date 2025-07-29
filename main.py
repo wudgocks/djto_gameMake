@@ -229,6 +229,7 @@ class Enemy:
         self.shoot_delay = random.randrange(1000, 3000)
         self.last_shot = pyxel.frame_count * (1000 / FPS)
         self.active = True
+        self.hp = 10 # 적 체력 추가
 
     def update(self):
         if not self.active: return
@@ -239,13 +240,33 @@ class Enemy:
         if self.x < 0 or self.x + self.w > WIDTH:
             self.speedx *= -1
 
-        if self.y > HEIGHT + 10 or self.x < -25 or self.x > WIDTH + 20:
+        if self.y > HEIGHT + 10 or self.x < -self.w or self.x > WIDTH + self.w: # 화면 밖으로 완전히 벗어나면
             self.reset()
-        
+            
         now = pyxel.frame_count * (1000 / FPS)
         if now - self.last_shot > self.shoot_delay:
             self.last_shot = now
-            self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h))
+            # 플레이어를 향해 총알 발사하도록 각도 계산
+            player_center_x = self.game.player.x + self.game.player.w // 2
+            player_center_y = self.game.player.y + self.game.player.h // 2
+            
+            enemy_center_x = self.x + self.w // 2
+            enemy_center_y = self.y + self.h // 2
+            
+            # 플레이어와 적 사이의 벡터 계산
+            dx = player_center_x - enemy_center_x
+            dy = player_center_y - enemy_center_y
+            
+            # 각도 계산 (라디안)
+            angle = math.atan2(dy, dx)
+            
+            # 총알 속도
+            bullet_speed = 5
+            speed_x = bullet_speed * math.cos(angle)
+            speed_y = bullet_speed * math.sin(angle)
+            
+            self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h, speed_x, speed_y))
+
 
     def reset(self):
         self.x = random.randrange(WIDTH - self.w)
@@ -253,6 +274,7 @@ class Enemy:
         self.speedy = random.randrange(1, 4)
         self.speedx = random.choice([-1, 1]) * random.randrange(0, 2) 
         self.active = True
+        self.hp = 10 # 체력 재설정
 
     def draw(self):
         if self.active:
@@ -260,19 +282,36 @@ class Enemy:
 
 
 class Boss:
-    def __init__(self, game_ref):
+    def __init__(self, game_ref, boss_type=1): # 보스 타입 인자 추가
         self.game = game_ref 
+        self.boss_type = boss_type
         self.w = 150
         self.h = 150
         self.x = (WIDTH - self.w) // 2
         self.y = -200
         self.speedy = 1
         self.speedx = 2
-        self.hp = 1000
         self.shoot_delay = 500
         self.last_shot = pyxel.frame_count * (1000 / FPS)
         self.state = "DESCENDING"
         self.active = True
+
+        # 보스 타입에 따른 설정
+        if self.boss_type == 1:
+            self.hp = 1000
+            self.color = COLOR_BOSS # 기본 빨간색 보스
+            self.shoot_delay = 500
+        elif self.boss_type == 2:
+            self.hp = 1500
+            self.color = COLOR_PURPLE # 보라색 보스
+            self.shoot_delay = 400
+            self.speedx = 3 # 좀 더 빠름
+        elif self.boss_type == 3:
+            self.hp = 2000
+            self.color = COLOR_CYAN # 청록색 보스
+            self.shoot_delay = 300
+            self.speedx = 4 # 더 빠름
+        # TODO: 더 많은 보스 타입과 패턴 추가 가능
 
     def update(self):
         if not self.active: return
@@ -299,17 +338,46 @@ class Boss:
 
     def shoot(self):
         bullet_speed = 3
-        angles = [0, 45, 90, 135, 180, 225, 270, 315]
-        for angle_deg in angles:
-            rad = math.radians(angle_deg)
-            dx = bullet_speed * math.cos(rad)
-            dy = bullet_speed * math.sin(rad)
-            self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
+        # 보스 타입에 따른 총알 패턴
+        if self.boss_type == 1:
+            # 8방향 기본 패턴
+            angles = [0, 45, 90, 135, 180, 225, 270, 315]
+            for angle_deg in angles:
+                rad = math.radians(angle_deg)
+                dx = bullet_speed * math.cos(rad)
+                dy = bullet_speed * math.sin(rad)
+                self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
+        elif self.boss_type == 2:
+            # 플레이어를 조준하는 샷 + 3방향 확산
+            player_center_x = self.game.player.x + self.game.player.w // 2
+            player_center_y = self.game.player.y + self.game.player.h // 2
+            
+            boss_center_x = self.x + self.w // 2
+            boss_center_y = self.y + self.h // 2
+            
+            target_angle = math.atan2(player_center_y - boss_center_y, player_center_x - boss_center_x)
+            
+            spread_angles = [-15, 0, 15] # 3방향 확산
+            for offset_deg in spread_angles:
+                angle_rad = target_angle + math.radians(offset_deg)
+                dx = bullet_speed * math.cos(angle_rad)
+                dy = bullet_speed * math.sin(angle_rad)
+                self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
+        elif self.boss_type == 3:
+            # 회전하며 샷 발사 (시간에 따라 각도 변화)
+            num_bullets = 8
+            base_angle_offset = (pyxel.frame_count * 5) % 360 # 프레임에 따라 각도 회전
+            for i in range(num_bullets):
+                angle_deg = (360 / num_bullets * i + base_angle_offset) % 360
+                rad = math.radians(angle_deg)
+                dx = bullet_speed * math.cos(rad)
+                dy = bullet_speed * math.sin(rad)
+                self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
 
 
     def draw(self):
         if self.active:
-            pyxel.rect(self.x, self.y, self.w, self.h, COLOR_BOSS)
+            pyxel.rect(self.x, self.y, self.w, self.h, self.color) # 보스 색상 적용
 
 
 class PlayerBullet:
@@ -336,7 +404,7 @@ class PlayerBullet:
 
 
 class EnemyBullet:
-    def __init__(self, x, y, speedx=0, speedy=7):
+    def __init__(self, x, y, speedx=0, speedy=7): # speedx, speedy 인자를 받을 수 있도록 변경
         self.x = x
         self.y = y
         self.w = 6
@@ -398,6 +466,7 @@ class Game:
         self.side_wings = []
         self.boss_instance = None
         self.boss_spawned = False
+        self.current_boss_type = 1 # 현재 보스 타입 추적
         self.score = 0
         self.game_over = False
         self.game_started = False
@@ -414,7 +483,7 @@ class Game:
         self.side_wings = [] 
         self.boss_instance = None
         self.boss_spawned = False
-        self.score = 0
+        self.score = 0 # 점수는 게임 오버 시에만 초기화되어야 함
         self.game_over = False
 
         # 플레이어 초기 상태 재설정
@@ -429,14 +498,25 @@ class Game:
         self.player.ultimate_gauge = 0 # 궁극기 게이지 초기화
 
         # 초기 적 생성
-        for i in range(5):
-            self.enemies.append(Enemy(self)) 
+        if not self.boss_instance: # 보스가 없을 때만 일반 적 생성
+            for i in range(5):
+                self.enemies.append(Enemy(self)) 
     
+    def spawn_boss(self, boss_type): # 보스 생성 함수 추가
+        for enemy in self.enemies:
+            enemy.active = False # 기존 적들 비활성화
+        self.enemies = [] # 적 리스트 비우기
+        self.boss_instance = Boss(self, boss_type)
+        self.boss_spawned = True
+        self.enemy_bullets = [] # 보스 등장 시 기존 적 총알 제거
+
     def update(self):
         if pyxel.btnp(pyxel.KEY_RETURN) and not self.game_started:
             self.game_started = True
-        
+            
         if pyxel.btnp(pyxel.KEY_R) and self.game_over:
+            self.score = 0 # 게임 오버 시에만 점수 초기화
+            self.current_boss_type = 1 # 보스 타입도 초기화
             self.reset_game_objects()
             self.game_started = True
 
@@ -467,58 +547,64 @@ class Game:
 
 
         # 보스 등장 조건
-        if not self.boss_spawned and self.score >= self.boss_score_threshold and not self.boss_instance:
-            for enemy in self.enemies:
-                enemy.active = False
-            self.enemies = []
+        # score 대신 current_boss_type을 기준으로 보스 등장 시점 제어
+        if not self.boss_spawned and not self.boss_instance: # 보스가 없고 스폰되지 않았다면
+            if self.current_boss_type == 1 and self.score >= self.boss_score_threshold:
+                self.spawn_boss(1)
+            elif self.current_boss_type == 2 and self.score >= self.boss_score_threshold + 5000: # 2번째 보스
+                self.spawn_boss(2)
+            elif self.current_boss_type == 3 and self.score >= self.boss_score_threshold + 15000: # 3번째 보스
+                self.spawn_boss(3)
+            # TODO: 더 많은 보스 등장 조건 추가
 
-            self.boss_instance = Boss(self) 
-            self.boss_spawned = True
-        
         # 플레이어 총알과 적 충돌 처리
         for enemy in self.enemies:
             for bullet in self.bullets:
                 if bullet.active and enemy.active and \
-                   is_colliding(bullet.x, bullet.y, bullet.w, bullet.h, enemy.x, enemy.y, enemy.w, enemy.h):
-                    enemy.active = False
+                    is_colliding(bullet.x, bullet.y, bullet.w, bullet.h, enemy.x, enemy.y, enemy.w, enemy.h):
+                    enemy.hp -= 10 # 적 체력 감소
                     bullet.active = False
-                    self.score += 100
-                    # **수정: 적 파괴 시 궁극기 게이지 증가량을 500으로 변경**
-                    self.player.ultimate_gauge = min(self.player.ultimate_gauge + 500, self.player.ultimate_max_gauge)
-                    
-                    drop_chance = random.random()
-                    item_type_to_drop = None
-                    if drop_chance < 0.15:
-                        item_type_to_drop = 'powerup'
-                    elif drop_chance < 0.20:
-                        item_type_to_drop = 'hp_up'
-                    elif drop_chance < 0.25:
-                        item_type_to_drop = 'wing'
-                    
-                    if item_type_to_drop:
-                        self.items.append(Item(enemy.x + enemy.w // 2, enemy.y + enemy.h // 2, item_type_to_drop))
+                    if enemy.hp <= 0: # 적 체력이 0 이하면
+                        enemy.active = False
+                        self.score += 100
+                        self.player.ultimate_gauge = min(self.player.ultimate_gauge + 500, self.player.ultimate_max_gauge)
+                        
+                        drop_chance = random.random()
+                        item_type_to_drop = None
+                        if drop_chance < 0.15:
+                            item_type_to_drop = 'powerup'
+                        elif drop_chance < 0.20:
+                            item_type_to_drop = 'hp_up'
+                        elif drop_chance < 0.25:
+                            item_type_to_drop = 'wing'
+                        
+                        if item_type_to_drop:
+                            self.items.append(Item(enemy.x + enemy.w // 2, enemy.y + enemy.h // 2, item_type_to_drop))
             
+            # 적이 죽거나 화면 밖으로 나갔을 때 새로운 적 생성 (보스 없을 때만)
             if not self.boss_instance and not enemy.active and enemy.y < HEIGHT:
-                 self.enemies.append(Enemy(self))
+                self.enemies.append(Enemy(self))
 
 
         # 플레이어 총알과 보스 충돌 처리
         if self.boss_instance and self.boss_instance.active and self.boss_instance.state == "ATTACKING":
             for bullet in self.bullets:
                 if bullet.active and \
-                   is_colliding(bullet.x, bullet.y, bullet.w, bullet.h, self.boss_instance.x, self.boss_instance.y, self.boss_instance.w, self.boss_instance.h):
+                    is_colliding(bullet.x, bullet.y, bullet.w, bullet.h, self.boss_instance.x, self.boss_instance.y, self.boss_instance.w, self.boss_instance.h):
                     bullet.active = False
                     self.boss_instance.hp -= 10
                     if self.boss_instance.hp <= 0:
                         self.boss_instance.state = "DEFEATED"
                         self.score += 5000
-                        for eb in self.enemy_bullets:
+                        for eb in self.enemy_bullets: # 보스가 죽으면 모든 총알 제거
                             eb.active = False
                         self.enemy_bullets = []
                         
-                        self.boss_instance = None
-                        self.boss_spawned = False
-                        self.reset_game_objects() 
+                        self.boss_instance = None # 보스 인스턴스 초기화
+                        self.boss_spawned = False # 보스 스폰 상태 초기화
+                        self.current_boss_type += 1 # 다음 보스 타입으로 증가
+                        self.player.ultimate_gauge = min(self.player.ultimate_gauge + self.player.ultimate_max_gauge / 2, self.player.ultimate_max_gauge) # 보스 잡으면 궁극기 게이지 절반 채워주기
+                        self.reset_game_objects() # 게임 오브젝트만 초기화 (점수, 보스 타입은 유지)
                         self.game_started = True 
                         break
 
@@ -527,11 +613,11 @@ class Game:
         if not self.player.invincible:
             for eb in self.enemy_bullets:
                 if eb.active and \
-                   is_colliding(eb.x, eb.y, eb.w, eb.h, self.player.x, self.player.y, self.player.w, self.player.h):
+                    is_colliding(eb.x, eb.y, eb.w, eb.h, self.player.x, self.player.y, self.player.w, self.player.h):
                     eb.active = False
                     self.player.lives -= 1
                     self.player.hide() 
-                    for remaining_eb in self.enemy_bullets:
+                    for remaining_eb in self.enemy_bullets: # 플레이어 피격 시 모든 적 총알 제거
                         remaining_eb.active = False
                     self.enemy_bullets = []
 
@@ -539,10 +625,24 @@ class Game:
                         self.game_over = True
                     break
 
+        # 플레이어와 적 충돌 처리 (이제 적도 체력이 있으므로, 플레이어와 충돌하면 플레이어 체력만 감소)
+        if not self.player.invincible:
+            for enemy in self.enemies:
+                if enemy.active and \
+                   is_colliding(self.player.x, self.player.y, self.player.w, self.player.h, enemy.x, enemy.y, enemy.w, enemy.h):
+                    enemy.active = False # 적은 파괴
+                    self.player.lives -= 1 # 플레이어 체력 감소
+                    self.player.hide()
+                    
+                    if self.player.lives <= 0:
+                        self.game_over = True
+                    break
+
+
         # 플레이어와 아이템 충돌 처리
         for item in self.items:
             if item.active and \
-               is_colliding(item.x, item.y, item.w, item.h, self.player.x, self.player.y, self.player.w, self.player.h):
+                is_colliding(item.x, item.y, item.w, item.h, self.player.x, self.player.y, self.player.w, self.player.h):
                 item.active = False
                 if item.type == 'powerup':
                     self.player.powerup()
@@ -647,7 +747,16 @@ class Game:
             if self.boss_instance and self.boss_instance.active and self.boss_instance.state == "ATTACKING":
                 bar_length = 200
                 bar_height = 8
-                fill = (self.boss_instance.hp / 1000) * bar_length
+                fill = (self.boss_instance.hp / self.boss_instance.hp) * bar_length # HP 비율 계산 시 보스의 최대 HP를 사용해야 함
+                
+                # 보스의 최대 HP를 기준으로 HP 바 길이를 계산해야 합니다.
+                # 보스 타입별 최대 HP를 Boss.__init__에서 설정했으므로, 그 값을 사용합니다.
+                boss_max_hp = 0
+                if self.boss_instance.boss_type == 1: boss_max_hp = 1000
+                elif self.boss_instance.boss_type == 2: boss_max_hp = 1500
+                elif self.boss_instance.boss_type == 3: boss_max_hp = 2000
+                
+                fill = (self.boss_instance.hp / boss_max_hp) * bar_length # 변경된 부분
                 
                 pyxel.rect(WIDTH // 2 - bar_length // 2, 20, fill, bar_height, COLOR_GREEN)
                 pyxel.rectb(WIDTH // 2 - bar_length // 2, 20, bar_length, bar_height, COLOR_WHITE)
