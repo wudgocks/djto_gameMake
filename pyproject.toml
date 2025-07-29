@@ -1,0 +1,2 @@
+[tool.pyxel]
+script = "main.py"
