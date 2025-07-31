@@ -1,193 +1,150 @@
-# Player 및 SideWing 클래스
-
 # player.py
+
 import pyxel
-import math
-from config import WIDTH, HEIGHT, FPS, COLOR_BLUE, COLOR_GREEN, COLOR_YELLOW, COLOR_ULTIMATE
-from bullet import PlayerBullet # PlayerBullet 클래스 임포트
+from config import *
+from bullet import *
 
 class Player:
-    def __init__(self, game_ref): 
-        self.game = game_ref 
-        self.w = 50
-        self.h = 40
-        self.x = (WIDTH - self.w) // 2
-        self.y = HEIGHT - 20 - self.h
-        self.speedx = 0
-        self.speedy = 0
-        self.player_speed = 5
-        
-        self.shoot_delay = 250
-        self.last_shot = pyxel.frame_count * (1000 / FPS) 
-        
-        self.power = 1 
-        self.lives = 3
-        self.hidden = False
-        self.hide_timer = pyxel.frame_count * (1000 / FPS)
-        self.invincible = False
-        self.invincible_timer = pyxel.frame_count * (1000 / FPS)
-        self.invincible_duration = 2000 
-        self.hide_duration = 500 
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.w = 16
+        self.h = 16
+        self.hp = PLAYER_HP
+        self.is_alive = True
+        self.flash_timer = 0
+        self.fire_timer = 0
+        self.fire_rate = PLAYER_START_FIRE_RATE # 초기 발사 속도
 
-        self.wing_count = 0
-        self.visible = True
+        self.bullet_w = PLAYER_START_BULLET_W
+        self.bullet_h = PLAYER_START_BULLET_H
 
-        # 궁극기 관련 변수 추가
-        self.ultimate_gauge = 0
-        self.ultimate_max_gauge = 5000 # 궁극기 게이지 최대치
-        self.ultimate_active = False # 궁극기 발동 여부
-        self.ultimate_active_timer = 0
-        self.ultimate_active_duration = 300 # 궁극기 발동 지속 시간 (ms)
-        self.ultimate_shoot_interval = 50 # 궁극기 총알 발사 간격 (ms)
-        self.last_ultimate_shot = pyxel.frame_count * (1000 / FPS)
+        self.options = [] # 옵션 리스트
+        self.current_power_level = 0 # 총알 강화 레벨 (0: 기본, 1: 2줄, 2: 3줄)
 
     def update(self):
-        current_time_ms = pyxel.frame_count * (1000 / FPS)
+        if not self.is_alive:
+            return
 
-        if self.invincible and current_time_ms - self.invincible_timer > self.invincible_duration:
-            self.invincible = False
-            self.visible = True 
-        elif self.invincible:
-            if int(current_time_ms / 50) % 2 == 0:
-                self.visible = True
-            else:
-                self.visible = False
-        else:
-            self.visible = True 
+        if pyxel.btn(pyxel.KEY_LEFT):
+            self.x = max(self.x - PLAYER_SPEED, 0)
+        if pyxel.btn(pyxel.KEY_RIGHT):
+            self.x = min(self.x + PLAYER_SPEED, WIDTH - self.w)
+        if pyxel.btn(pyxel.KEY_UP):
+            self.y = max(self.y - PLAYER_SPEED, 0)
+        if pyxel.btn(pyxel.KEY_DOWN):
+            self.y = min(self.y + PLAYER_SPEED, HEIGHT - self.h)
 
-        self.speedx = 0
-        self.speedy = 0
+        if self.flash_timer > 0:
+            self.flash_timer -= 1
 
-        if not self.hidden:
-            if pyxel.btn(pyxel.KEY_LEFT):
-                self.speedx = -self.player_speed
-            if pyxel.btn(pyxel.KEY_RIGHT):
-                self.speedx = self.player_speed
-            if pyxel.btn(pyxel.KEY_UP):
-                self.speedy = -self.player_speed
-            if pyxel.btn(pyxel.KEY_DOWN):
-                self.speedy = self.player_speed
-            
-            if pyxel.btn(pyxel.KEY_SPACE):
-                self.shoot()
+        self.fire_timer += 1
 
-            # F 키로 궁극기 발동
-            if pyxel.btnp(pyxel.KEY_F) and self.ultimate_gauge >= self.ultimate_max_gauge:
-                self.activate_ultimate()
+        # 옵션 위치 업데이트 (플레이어 따라다니게)
+        if len(self.options) > 0:
+            # 옵션 1 (왼쪽)
+            self.options[0].x = self.x - self.options[0].w - 5
+            self.options[0].y = self.y + self.h / 2 - self.options[0].h / 2
+        if len(self.options) > 1:
+            # 옵션 2 (오른쪽)
+            self.options[1].x = self.x + self.w + 5
+            self.options[1].y = self.y + self.h / 2 - self.options[1].h / 2
 
-            self.x += self.speedx
-            self.y += self.speedy
-
-            self.x = max(0, min(self.x, WIDTH - self.w))
-            self.y = max(0, min(self.y, HEIGHT - self.h))
-
-        # 궁극기 발동 중 처리
-        if self.ultimate_active:
-            if current_time_ms - self.ultimate_active_timer > self.ultimate_active_duration:
-                self.ultimate_active = False
-            elif current_time_ms - self.last_ultimate_shot > self.ultimate_shoot_interval:
-                self.last_ultimate_shot = current_time_ms
-                self.game.spawn_ultimate_bullets() # Game 클래스의 메서드 호출
-
-        if self.hidden and current_time_ms - self.hide_timer > self.hide_duration: 
-            self.hidden = False
-            self.invincible = True 
-            self.invincible_timer = current_time_ms
-            self.x = (WIDTH - self.w) // 2 
-            self.y = HEIGHT - 20 - self.h
-            self.visible = True 
-
-
-    def shoot(self):
-        now = pyxel.frame_count * (1000 / FPS)
-        current_shoot_delay = self.shoot_delay / (1 + (self.power - 1) * 0.5)
-
-        if now - self.last_shot > current_shoot_delay:
-            self.last_shot = now
-            if self.power == 1:
-                self.game.bullets.append(PlayerBullet(self.x + self.w // 2 - 2, self.y, 4, 15))
-            elif self.power == 2:
-                self.game.bullets.append(PlayerBullet(self.x + 10, self.y, 6, 18))
-                self.game.bullets.append(PlayerBullet(self.x + self.w - 10 - 6, self.y, 6, 18))
-            elif self.power == 3:
-                self.game.bullets.append(PlayerBullet(self.x + self.w // 2 - 3, self.y, 6, 20))
-                self.game.bullets.append(PlayerBullet(self.x + 5, self.y + 10, 6, 18))
-                self.game.bullets.append(PlayerBullet(self.x + self.w - 5 - 6, self.y + 10, 6, 18))
-            
-            for wing in self.game.side_wings: 
-                if wing.active:
-                    wing.shoot()
-
-    def powerup(self):
-        if self.power < 3:
-            self.power += 1
-
-    def gain_life(self):
-        if self.lives < 3:
-            self.lives += 1
-
-    def add_wing(self):
-        if self.wing_count < 2:
-            self.wing_count += 1
-            if self.wing_count == 1:
-                self.game.side_wings.append(SideWing(self.game.player, -1)) 
-            elif self.wing_count == 2:
-                self.game.side_wings.append(SideWing(self.game.player, 1)) 
-            
-            if len(self.game.side_wings) >= 1:
-                self.game.side_wings[0].offset_x = -70 
-                self.game.side_wings[0].offset_y = 0
-            if len(self.game.side_wings) >= 2:
-                self.game.side_wings[1].offset_x = 70
-                self.game.side_wings[1].offset_y = 0
-
-    def activate_ultimate(self):
-        self.ultimate_gauge = 0 
-        self.ultimate_active = True
-        self.ultimate_active_timer = pyxel.frame_count * (1000 / FPS)
-        self.last_ultimate_shot = pyxel.frame_count * (1000 / FPS) 
-
-    def hide(self):
-        self.visible = False 
-        self.hidden = True
-        self.hide_timer = pyxel.frame_count * (1000 / FPS) 
-        self.x = -1000 
-        self.y = -1000
-
-        for wing in self.game.side_wings: 
-            wing.active = False 
-        self.game.side_wings = [] 
-        self.wing_count = 0
 
     def draw(self):
-        if self.visible: 
-            pyxel.rect(self.x, self.y, self.w, self.h, COLOR_BLUE)
+        if not self.is_alive:
+            return
+
+        if self.flash_timer > 0 and pyxel.frame_count % 4 < 2:
+            return
+
+        pyxel.rect(self.x, self.y, self.w, self.h, COLOR_BLUE)
+
+        for opt in self.options:
+            opt.draw()
+
+    def shoot(self):
+        bullets = []
+        if self.is_alive and self.fire_timer >= self.fire_rate:
+            self.fire_timer = 0
+            # 플레이어 본체 총알
+            bullets.append(PlayerBullet(self.x + self.w / 2 - self.bullet_w / 2, self.y, self.bullet_w, self.bullet_h, speedy=-PLAYER_BULLET_SPEED))
+
+            # 총알 강화 레벨에 따라 추가 총알 발사
+            if self.current_power_level >= 1: # 2줄 이상
+                bullets.append(PlayerBullet(self.x + self.w / 2 - self.bullet_w * 1.5 - 2, self.y, self.bullet_w, self.bullet_h, speedy=-PLAYER_BULLET_SPEED))
+                bullets.append(PlayerBullet(self.x + self.w / 2 + self.bullet_w * 0.5 + 2, self.y, self.bullet_w, self.bullet_h, speedy=-PLAYER_BULLET_SPEED))
+            if self.current_power_level >= 2: # 3줄 이상 (2줄 총알보다 더 바깥쪽으로)
+                 bullets.append(PlayerBullet(self.x + self.w / 2 - self.bullet_w * 2.5 - 4, self.y, self.bullet_w, self.bullet_h, speedy=-PLAYER_BULLET_SPEED))
+                 bullets.append(PlayerBullet(self.x + self.w / 2 + self.bullet_w * 1.5 + 4, self.y, self.bullet_w, self.bullet_h, speedy=-PLAYER_BULLET_SPEED))
+
+            # 옵션 총알 발사
+            for opt in self.options:
+                bullets.append(PlayerBullet(opt.x + opt.w / 2 - self.bullet_w / 2, opt.y, self.bullet_w, self.bullet_h, speedy=-PLAYER_BULLET_SPEED))
+        return bullets
 
 
-class SideWing:
-    def __init__(self, parent_player, side): 
-        self.w = 30
-        self.h = 25
-        self.parent = parent_player
-        self.side = side 
-        self.offset_x = 0
-        self.offset_y = 0
-        self.x = self.parent.x + self.parent.w // 2 + self.offset_x - self.w // 2 
-        self.y = self.parent.y + self.parent.h // 2 + self.offset_y - self.h // 2
-        self.shoot_delay = 300
-        self.last_shot = pyxel.frame_count * (1000 / FPS)
-        self.active = True
+    def take_damage(self, amount):
+        if self.flash_timer > 0:
+            return
+
+        self.hp -= amount
+        self.flash_timer = 30 # 0.5초 무적
+        
+        # 피격 시 강화 효과 감소 (총알 약화 및 옵션 제거)
+        if self.current_power_level > 0:
+            self.current_power_level -= 1
+            self._update_bullet_power() # 총알 파워 레벨에 따른 스펙 업데이트
+        
+        # 옵션이 하나라도 있으면 하나 제거
+        if len(self.options) > 0:
+            self.options.pop() # 가장 마지막에 추가된 옵션 제거
+
+        if self.hp <= 0:
+            self.is_alive = False
+
+    def gain_hp(self, amount):
+        self.hp = min(self.hp + amount, PLAYER_MAX_HP)
+
+    def power_up(self, item_type):
+        if item_type == 'wing':
+            if self.current_power_level < PLAYER_MAX_POWER_LEVEL: # 최대 레벨 제한 적용
+                self.current_power_level += 1
+                self._update_bullet_power() # 총알 파워 레벨에 따른 스펙 업데이트
+        elif item_type == 'option':
+            if len(self.options) < PLAYER_OPTION_MAX:
+                self.options.append(Option(self.x, self.y, self)) # 플레이어 참조 전달
+    
+    def _update_bullet_power(self):
+        # 파워 레벨에 따라 총알 크기 및 발사 속도 조정
+        if self.current_power_level == 0: # 기본 (1줄)
+            self.bullet_w = PLAYER_START_BULLET_W
+            self.bullet_h = PLAYER_START_BULLET_H
+            self.fire_rate = PLAYER_START_FIRE_RATE
+        elif self.current_power_level == 1: # 2줄
+            self.bullet_w = PLAYER_START_BULLET_W * 2
+            self.bullet_h = PLAYER_START_BULLET_H * 2
+            self.fire_rate = max(1, PLAYER_START_FIRE_RATE - 2)
+        elif self.current_power_level == 2: # 3줄 (최대 레벨)
+            self.bullet_w = PLAYER_START_BULLET_W * 3
+            self.bullet_h = PLAYER_START_BULLET_H * 3
+            self.fire_rate = max(1, PLAYER_START_FIRE_RATE - 4)
+
+
+class Option:
+    def __init__(self, x, y, player_ref):
+        self.x = x
+        self.y = y
+        self.w = 12
+        self.h = 12
+        self.color = COLOR_YELLOW # 옵션 색상 (아이템 색상과 통일)
+        self.player_ref = player_ref # 플레이어 객체 참조 (위치 추적용)
+        self.is_alive = True
 
     def update(self):
-        self.x = self.parent.x + self.parent.w // 2 + self.offset_x - self.w // 2
-        self.y = self.parent.y + self.parent.h // 2 + self.offset_y - self.h // 2
-
-    def shoot(self):
-        now = pyxel.frame_count * (1000 / FPS)
-        if now - self.last_shot > self.shoot_delay:
-            self.last_shot = now
-            self.parent.game.bullets.append(PlayerBullet(self.x + self.w // 2 - 2, self.y, 4, 15)) 
+        # 플레이어 update에서 직접 위치를 지정해주므로 여기서는 특별히 할 일 없음
+        pass
 
     def draw(self):
-        if self.active:
-            pyxel.rect(self.x, self.y, self.w, self.h, COLOR_GREEN)
+        if self.is_alive:
+            pyxel.rect(self.x, self.y, self.w, self.h, self.color)

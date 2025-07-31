@@ -1,8 +1,8 @@
-# PlayerBullet 및 EnemyBullet 클래스
-
 # bullet.py
+
 import pyxel
-from config import WIDTH, HEIGHT, COLOR_YELLOW, COLOR_LIGHT_GREY
+import math
+from config import * 
 
 class PlayerBullet:
     def __init__(self, x, y, w, h, speedx=0, speedy=-10):
@@ -10,28 +10,6 @@ class PlayerBullet:
         self.y = y
         self.w = w
         self.h = h
-        self.speedx = speedx # 궁극기 총알을 위해 추가
-        self.speedy = speedy # 일반 총알의 기본값은 위로(-10)
-        self.active = True
-
-    def update(self):
-        if not self.active: return
-        self.x += self.speedx # x축 이동 적용
-        self.y += self.speedy
-        if self.y + self.h < 0 or self.x < -self.w or self.x > WIDTH: # 화면 밖으로 나가면 비활성화
-            self.active = False
-
-    def draw(self):
-        if self.active:
-            pyxel.rect(self.x, self.y, self.w, self.h, COLOR_YELLOW)
-
-
-class EnemyBullet:
-    def __init__(self, x, y, speedx=0, speedy=7): # speedx, speedy 인자를 받을 수 있도록 변경
-        self.x = x
-        self.y = y
-        self.w = 6
-        self.h = 12
         self.speedx = speedx
         self.speedy = speedy
         self.active = True
@@ -40,6 +18,40 @@ class EnemyBullet:
         if not self.active: return
         self.x += self.speedx
         self.y += self.speedy
+        if self.y + self.h < 0 or self.x < -self.w or self.x > WIDTH:
+            self.active = False
+
+    def draw(self):
+        if self.active:
+            pyxel.rect(self.x, self.y, self.w, self.h, COLOR_BULLET_PLAYER_STRONG)
+
+
+class EnemyBullet:
+    def __init__(self, x, y, bullet_type="straight", target_x=None, target_y=None, speed=ENEMY_BULLET_SPEED):
+        self.x = x
+        self.y = y
+        self.w = ENEMY_BULLET_WIDTH
+        self.h = ENEMY_BULLET_HEIGHT
+        self.speed = speed
+        self.active = True
+        self.bullet_type = bullet_type
+
+        self.dx = 0
+        self.dy = 0
+
+        if bullet_type == "straight":
+            self.dy = 1
+        elif bullet_type == "aimed" and target_x is not None and target_y is not None:
+            angle = math.atan2(target_y - self.y, target_x - self.x)
+            self.dx = math.cos(angle)
+            self.dy = math.sin(angle)
+
+    def update(self):
+        if not self.active: return
+
+        self.x += self.dx * self.speed
+        self.y += self.dy * self.speed
+
         if self.y > HEIGHT or self.y + self.h < 0 or \
            self.x > WIDTH or self.x + self.w < 0:
             self.active = False

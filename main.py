@@ -1,330 +1,384 @@
 # main.py
+
 import pyxel
 import random
 import math
 
-# 각 모듈에서 필요한 클래스와 상수를 임포트
-from config import (
-    WIDTH, HEIGHT, FPS, 
-    COLOR_BLACK, COLOR_WHITE, COLOR_RED, COLOR_GREEN, 
-    COLOR_BLUE, COLOR_YELLOW, COLOR_LIGHT_GREY, COLOR_ORANGE, 
-    COLOR_PURPLE, COLOR_CYAN, COLOR_BOSS, COLOR_ULTIMATE
-)
-from utils import is_colliding
-from player import Player, SideWing
+# 다른 파일에서 클래스와 상수를 가져옵니다.
+# 실제 실행 시에는 아래 import 문을 사용하여 파일들을 분리하거나,
+# 모든 코드를 하나의 파일에 순서대로 붙여넣을 수 있습니다.
+
+# config.py 에서 모든 상수 가져오기
+from config import *
+# bullet.py 에서 클래스 가져오기
+from bullet import *
+# player.py 에서 클래스 가져오기
+from player import *
+# enemy.py 에서 클래스 가져오기
 from enemy import Enemy, Boss
-from bullet import PlayerBullet, EnemyBullet
+# item.py 에서 클래스 가져오기
 from item import Item
+
 
 class Game:
     def __init__(self):
-        pyxel.init(WIDTH, HEIGHT, title="1945 Shooter Pyxel", fps=FPS)
-        
-        self.player = Player(self) 
+        pyxel.init(WIDTH, HEIGHT, title="1945 Shooter Enhanced", fps=FPS)
+
+        self.player = Player(WIDTH / 2, HEIGHT - 30)
+        self.player_bullets = []
         self.enemies = []
-        self.bullets = []
         self.enemy_bullets = []
         self.items = []
-        self.side_wings = []
-        self.boss_instance = None
-        self.boss_spawned = False
-        self.current_boss_type = 1 # 현재 보스 타입 추적
-        self.score = 0
-        self.game_over = False
-        self.game_started = False
-        self.boss_score_threshold = 2000
 
-        self.reset_game_objects()
+        self.boss = None
+        self.current_stage = 1
+        self.stage_timer = 0
+        self.enemies_spawned_this_stage = 0
+        self.stage_completed = False
+
+        self.ultimate_gauge = 0 # 궁극기 게이지 추가
+        self.ultimate_effect_timer = 0 # 궁극기 이펙트 타이머
+
+        self.game_state = "TITLE"
+
         pyxel.run(self.update, self.draw)
 
-    def reset_game_objects(self):
+    def _start_game(self):
+        self.game_state = "PLAYING"
+        self.player = Player(WIDTH / 2, HEIGHT - 30)
+        self.player_bullets = []
         self.enemies = []
-        self.bullets = []
         self.enemy_bullets = []
         self.items = []
-        self.side_wings = [] 
-        # self.score = 0 # 점수는 게임 오버 시에만 초기화되어야 함 (주석 처리 또는 if self.game_over: 조건 추가)
-        self.game_over = False
-
-        # 플레이어 초기 상태 재설정
-        self.player.x = (WIDTH - self.player.w) // 2
-        self.player.y = HEIGHT - 20 - self.player.h
-        self.player.power = 1
-        self.player.lives = 3
-        self.player.hidden = False
-        self.player.invincible = False
-        self.player.wing_count = 0
-        self.player.visible = True
-        self.player.ultimate_gauge = 0 # 궁극기 게이지 초기화
-
-        # 초기 적 생성
-        if not self.boss_instance: # 보스가 없을 때만 일반 적 생성
-            for i in range(5):
-                self.enemies.append(Enemy(self)) 
-    
-    def spawn_boss(self, boss_type): # 보스 생성 함수 추가
-        for enemy in self.enemies:
-            enemy.active = False # 기존 적들 비활성화
-        self.enemies = [] # 적 리스트 비우기
-        self.boss_instance = Boss(self, boss_type)
-        self.boss_spawned = True
-        self.enemy_bullets = [] # 보스 등장 시 기존 적 총알 제거
+        self.boss = None
+        self.current_stage = 1
+        self.stage_timer = 0
+        self.enemies_spawned_this_stage = 0
+        self.stage_completed = False
+        self.ultimate_gauge = 0 # 게임 시작 시 게이지 초기화
+        self.ultimate_effect_timer = 0 # 이펙트 타이머 초기화
+        pyxel.pal() # 게임 시작 시 팔레트 리셋 (혹시 이전 게임의 궁극기 효과가 남아있을 수 있으므로)
 
     def update(self):
-        if pyxel.btnp(pyxel.KEY_RETURN) and not self.game_started:
-            self.game_started = True
-            
-        if pyxel.btnp(pyxel.KEY_R) and self.game_over:
-            self.score = 0 # 게임 오버 시에만 점수 초기화
-            self.current_boss_type = 1 # 보스 타입도 초기화
-            self.reset_game_objects()
-            self.game_started = True
+        if self.game_state == "TITLE":
+            if pyxel.btnp(pyxel.KEY_RETURN):
+                self._start_game()
+        elif self.game_state == "PLAYING":
+            self._update_playing()
+        elif self.game_state == "GAME_OVER" or self.game_state == "STAGE_CLEAR":
+            if pyxel.btnp(pyxel.KEY_RETURN):
+                if self.game_state == "STAGE_CLEAR":
+                    if self.current_stage < 2:
+                        self.current_stage += 1
+                        self.enemies_spawned_this_stage = 0
+                        self.stage_timer = 0
+                        self.enemies = []
+                        self.enemy_bullets = []
+                        self.items = []
+                        self.boss = None
+                        self.stage_completed = False
+                        self.game_state = "PLAYING"
+                        pyxel.pal() # 다음 스테이지 진입 시 팔레트 리셋
+                    else:
+                        self._start_game()
+                else:
+                    self._start_game()
 
-        if not self.game_started or self.game_over:
-            return
+    def _update_playing(self):
+        self.stage_timer += 1
 
         self.player.update()
-        for enemy in self.enemies: 
-            enemy.update()
-        for bullet in self.bullets: 
+        if pyxel.btn(pyxel.KEY_SPACE):
+            new_bullets = self.player.shoot()
+            if new_bullets:
+                self.player_bullets.extend(new_bullets)
+
+        # 궁극기 사용 (F 키)
+        if pyxel.btnp(pyxel.KEY_F) and self.ultimate_gauge >= ULTIMATE_GAUGE_MAX:
+            self._activate_ultimate()
+
+        # 궁극기 이펙트 타이머 감소
+        if self.ultimate_effect_timer > 0:
+            self.ultimate_effect_timer -= 1
+            if self.ultimate_effect_timer == 0:
+                pyxel.pal() # 팔레트 리셋
+
+
+        for bullet in self.player_bullets:
             bullet.update()
-        for eb in self.enemy_bullets: 
-            eb.update()
-        for item in self.items: 
-            item.update()
-        for wing in self.side_wings: 
-            wing.update()
+        self.player_bullets = [b for b in self.player_bullets if b.active]
+
+        current_stage_enemies_limit = 0
+        if self.current_stage == 1:
+            current_stage_enemies_limit = STAGE1_ENEMY_COUNT
+        elif self.current_stage == 2:
+            current_stage_enemies_limit = STAGE2_ENEMY_COUNT
+
+        # 보스가 없으면 일반 적 스폰 (보스 등장 후에는 일반 적 스폰 중단)
+        if self.boss is None and self.enemies_spawned_this_stage < current_stage_enemies_limit:
+            # 보스 등장 시간을 고려하여 적 스폰을 멈추고 보스를 생성
+            if self.current_stage == 1 and self.stage_timer >= STAGE1_BOSS_ACTIVE_TIME:
+                self.enemies_spawned_this_stage = current_stage_enemies_limit # 더 이상 일반 적 스폰 안함
+            elif self.current_stage == 2 and self.stage_timer >= STAGE2_BOSS_ACTIVE_TIME:
+                self.enemies_spawned_this_stage = current_stage_enemies_limit # 더 이상 일반 적 스폰 안함
+            else: # 보스 등장 시간 전에는 계속 스폰
+                if pyxel.frame_count % 60 == 0:
+                    enemy_x = random.randint(0, WIDTH - ENEMY_SIZE)
+                    enemy_y = -ENEMY_SIZE
+                    enemy_types = ["A", "B", "C", "D"]
+                    selected_type = random.choice(enemy_types)
+
+                    self.enemies.append(Enemy(enemy_x, enemy_y, selected_type, self.player))
+                    self.enemies_spawned_this_stage += 1
+
+
+        new_enemy_bullets = []
         
-        if self.boss_instance and self.boss_instance.active:
-            self.boss_instance.update()
-
-        # 죽거나 비활성화된 오브젝트 제거
-        self.enemies[:] = [e for e in self.enemies if e.active]
-        self.bullets[:] = [b for b in self.bullets if b.active]
-        self.enemy_bullets[:] = [eb for eb in self.enemy_bullets if eb.active]
-        self.items[:] = [item for item in self.items if item.active]
-        self.side_wings[:] = [wing for wing in self.side_wings if wing.active]
-
-
-        # 보스 등장 조건
-        # score 대신 current_boss_type을 기준으로 보스 등장 시점 제어
-        if not self.boss_spawned and not self.boss_instance: # 보스가 없고 스폰되지 않았다면
-            if self.current_boss_type == 1 and self.score >= self.boss_score_threshold:
-                self.spawn_boss(1)
-            elif self.current_boss_type == 2 and self.score >= self.boss_score_threshold + 5000: # 2번째 보스
-                self.spawn_boss(2)
-            elif self.current_boss_type == 3 and self.score >= self.boss_score_threshold + 15000: # 3번째 보스
-                self.spawn_boss(3)
-            # TODO: 더 많은 보스 등장 조건 추가
-
-        # 플레이어 총알과 적 충돌 처리
+        active_enemies = []
         for enemy in self.enemies:
-            for bullet in self.bullets:
-                if bullet.active and enemy.active and \
-                    is_colliding(bullet.x, bullet.y, bullet.w, bullet.h, enemy.x, enemy.y, enemy.w, enemy.h):
-                    enemy.hp -= 10 # 적 체력 감소
-                    bullet.active = False
-                    if enemy.hp <= 0: # 적 체력이 0 이하면
-                        enemy.active = False
-                        self.score += 100
-                        self.player.ultimate_gauge = min(self.player.ultimate_gauge + 500, self.player.ultimate_max_gauge)
-                        
-                        drop_chance = random.random()
-                        item_type_to_drop = None
-                        if drop_chance < 0.15:
-                            item_type_to_drop = 'powerup'
-                        elif drop_chance < 0.20:
-                            item_type_to_drop = 'hp_up'
-                        elif drop_chance < 0.25:
-                            item_type_to_drop = 'wing'
-                        
-                        if item_type_to_drop:
-                            self.items.append(Item(enemy.x + enemy.w // 2, enemy.y + enemy.h // 2, item_type_to_drop))
-            
-            # 적이 죽거나 화면 밖으로 나갔을 때 새로운 적 생성 (보스 없을 때만)
-            if not self.boss_instance and not enemy.active and enemy.y < HEIGHT:
-                self.enemies.append(Enemy(self))
+            enemy_bullets_from_enemy = enemy.update(self.player.x, self.player.y)
+            new_enemy_bullets.extend(enemy_bullets_from_enemy)
+
+            if enemy.is_alive:
+                active_enemies.append(enemy)
+        self.enemies = active_enemies # 죽은 적 제거는 _handle_collisions에서 최종적으로 처리
+
+        # 보스 등장 조건 및 보스 생성
+        # 모든 일반 적이 스폰되었고, 보스가 아직 없으면 보스 생성
+        if self.boss is None and self.enemies_spawned_this_stage >= current_stage_enemies_limit:
+            if self.current_stage == 1:
+                self.boss = Boss(WIDTH / 2 - BOSS_WIDTH / 2, 20, self.player)
+            elif self.current_stage == 2:
+                self.boss = Boss(WIDTH / 2 - BOSS_WIDTH / 2, 20, self.player)
 
 
-        # 플레이어 총알과 보스 충돌 처리
-        if self.boss_instance and self.boss_instance.active and self.boss_instance.state == "ATTACKING":
-            for bullet in self.bullets:
-                if bullet.active and \
-                    is_colliding(bullet.x, bullet.y, bullet.w, bullet.h, self.boss_instance.x, self.boss_instance.y, self.boss_instance.w, self.boss_instance.h):
-                    bullet.active = False
-                    self.boss_instance.hp -= 10
-                    if self.boss_instance.hp <= 0:
-                        self.boss_instance.state = "DEFEATED"
-                        self.score += 5000
-                        for eb in self.enemy_bullets: # 보스가 죽으면 모든 총알 제거
-                            eb.active = False
-                        self.enemy_bullets = []
-                        
-                        self.boss_instance = None # 보스 인스턴스 초기화
-                        self.boss_spawned = False # 보스 스폰 상태 초기화
-                        self.current_boss_type += 1 # 다음 보스 타입으로 증가
-                        self.player.ultimate_gauge = min(self.player.ultimate_gauge + self.player.ultimate_max_gauge / 2, self.player.ultimate_max_gauge) # 보스 잡으면 궁극기 게이지 절반 채워주기
-                        self.reset_game_objects() # 게임 오브젝트만 초기화 (점수, 보스 타입은 유지)
-                        self.game_started = True 
-                        break
+        if self.boss:
+            boss_bullets, boss_minions = self.boss.update()
+            self.enemy_bullets.extend(boss_bullets)
+            self.enemies.extend(boss_minions)
+            # 보스가 죽으면 스테이지 완료 처리 및 아이템 드랍
+            if not self.boss.is_alive:
+                self.boss = None
+                self.stage_completed = True
+                if random.random() < ITEM_BOSS_DROP_PROBABILITY: # 보스는 항상 드랍
+                    self.items.append(Item(WIDTH / 2, HEIGHT / 2, random.choice(['hp_up', 'wing', 'option']))) # 보스 드랍 아이템
 
 
-        # 적 총알과 플레이어 충돌 처리
-        if not self.player.invincible:
-            for eb in self.enemy_bullets:
-                if eb.active and \
-                    is_colliding(eb.x, eb.y, eb.w, eb.h, self.player.x, self.player.y, self.player.w, self.player.h):
-                    eb.active = False
-                    self.player.lives -= 1
-                    self.player.hide() 
-                    for remaining_eb in self.enemy_bullets: # 플레이어 피격 시 모든 적 총알 제거
-                        remaining_eb.active = False
-                    self.enemy_bullets = []
+        self.enemy_bullets.extend(new_enemy_bullets)
 
-                    if self.player.lives <= 0:
-                        self.game_over = True
-                    break
+        for bullet in self.enemy_bullets:
+            bullet.update()
+        self.enemy_bullets = [b for b in self.enemy_bullets if b.active]
 
-        # 플레이어와 적 충돌 처리 (이제 적도 체력이 있으므로, 플레이어와 충돌하면 플레이어 체력만 감소)
-        if not self.player.invincible:
-            for enemy in self.enemies:
-                if enemy.active and \
-                   is_colliding(self.player.x, self.player.y, self.player.w, self.player.h, enemy.x, enemy.y, enemy.w, enemy.h):
-                    enemy.active = False # 적은 파괴
-                    self.player.lives -= 1 # 플레이어 체력 감소
-                    self.player.hide()
-                    
-                    if self.player.lives <= 0:
-                        self.game_over = True
-                    break
-
-
-        # 플레이어와 아이템 충돌 처리
         for item in self.items:
-            if item.active and \
-                is_colliding(item.x, item.y, item.w, item.h, self.player.x, self.player.y, self.player.w, self.player.h):
-                item.active = False
-                if item.type == 'powerup':
-                    self.player.powerup()
-                elif item.type == 'hp_up':
-                    self.player.gain_life()
-                elif item.type == 'wing':
-                    self.player.add_wing()
+            item.update()
+        self.items = [i for i in self.items if i.active]
 
-    # 궁극기 총알 생성 함수
-    def spawn_ultimate_bullets(self):
-        num_bullets = 10 
-        spread_angle = 120 
-        base_angle = 90 
 
+        self._handle_collisions()
+
+        if self.player.hp <= 0:
+            self.game_state = "GAME_OVER"
+
+        self._check_stage_completion()
+
+    def _handle_collisions(self):
+        # 플레이어 총알과 적 충돌
+        new_player_bullets = []
+        for bullet in self.player_bullets:
+            hit_enemy = False
+            for enemy in self.enemies:
+                if bullet.active and enemy.is_alive and self._is_colliding(bullet, enemy):
+                    enemy.take_damage(1)
+                    bullet.active = False
+                    hit_enemy = True
+                    break
+            if not hit_enemy:
+                new_player_bullets.append(bullet)
+        self.player_bullets = new_player_bullets
+
+        # 죽은 적 처리 및 아이템 드랍/게이지 충전
+        active_enemies_after_damage = []
+        for enemy in self.enemies:
+            if enemy.is_alive:
+                active_enemies_after_damage.append(enemy)
+            else:
+                # 적 사망 시 아이템 드랍
+                if random.random() < ITEM_DROP_PROBABILITY:
+                    self.items.append(Item(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, random.choice(['hp_up', 'wing', 'option'])))
+                self.ultimate_gauge = min(ULTIMATE_GAUGE_MAX, self.ultimate_gauge + ULTIMATE_GAUGE_PER_KILL) # 궁극기 게이지 충전
+        self.enemies = active_enemies_after_damage
+
+
+        # 플레이어 총알과 보스 충돌
+        if self.boss and self.boss.is_alive:
+            new_player_bullets_for_boss = []
+            for bullet in self.player_bullets:
+                if bullet.active and self._is_colliding(bullet, self.boss):
+                    if self._is_colliding(bullet, self.boss, is_weak_point=True):
+                        self.boss.take_damage(1, is_weak_point_hit=True)
+                    else:
+                        self.boss.take_damage(1)
+                    bullet.active = False
+                    self.ultimate_gauge = min(ULTIMATE_GAUGE_MAX, self.ultimate_gauge + ULTIMATE_GAUGE_PER_BOSS_HIT) # 보스 타격 시 게이지 충전
+                if bullet.active:
+                    new_player_bullets_for_boss.append(bullet)
+            self.player_bullets = new_player_bullets_for_boss
+
+        # 적 총알과 플레이어 충돌
+        if self.player.is_alive:
+            new_enemy_bullets_after_player_hit = []
+            for e_bullet in self.enemy_bullets:
+                if e_bullet.active and self._is_colliding(e_bullet, self.player):
+                    self.player.take_damage(1)
+                    e_bullet.active = False
+                if e_bullet.active:
+                    new_enemy_bullets_after_player_hit.append(e_bullet)
+            self.enemy_bullets = new_enemy_bullets_after_player_hit
+
+        # 적과 플레이어 충돌 (적이 플레이어에게 직접 박는 경우)
+        if self.player.is_alive:
+            active_enemies_after_player_collision = []
+            for enemy in self.enemies:
+                if enemy.is_alive and self._is_colliding(enemy, self.player):
+                    self.player.take_damage(999) # 즉사
+                    enemy.is_alive = False
+                    self.ultimate_gauge = min(ULTIMATE_GAUGE_MAX, self.ultimate_gauge + ULTIMATE_GAUGE_PER_KILL) # 궁극기 게이지 충전
+                if enemy.is_alive:
+                    active_enemies_after_player_collision.append(enemy)
+            self.enemies = active_enemies_after_player_collision
+
+
+        # 아이템과 플레이어 충돌
+        if self.player.is_alive:
+            new_items_after_pickup = []
+            for item in self.items:
+                if item.active and self._is_colliding(item, self.player):
+                    if item.type == 'hp_up':
+                        self.player.gain_hp(1)
+                    elif item.type == 'wing':
+                        self.player.power_up('wing')
+                    elif item.type == 'option':
+                        self.player.power_up('option')
+                    item.active = False
+                if item.active:
+                    new_items_after_pickup.append(item)
+            self.items = new_items_after_pickup
+
+
+    def _is_colliding(self, obj1, obj2, is_weak_point=False):
+        if is_weak_point and hasattr(obj2, 'weak_point_x'):
+            return (obj1.x < obj2.weak_point_x + obj2.weak_point_w and
+                    obj1.x + obj1.w > obj2.weak_point_x and
+                    obj1.y < obj2.weak_point_y + obj2.weak_point_h and
+                    obj1.y + obj1.h > obj2.weak_point_y)
+        else:
+            return (obj1.x < obj2.x + obj2.w and
+                    obj1.x + obj1.w > obj2.x and
+                    obj1.y < obj2.y + obj2.h and
+                    obj1.y + obj1.h > obj2.y)
+
+    def _activate_ultimate(self):
+        # 궁극기 발동 시 게이지 소모
+        self.ultimate_gauge = 0
+        num_bullets = 24 # 발사할 총알 수
         for i in range(num_bullets):
-            angle_offset = (i - (num_bullets - 1) / 2) * (spread_angle / num_bullets)
-            angle_deg = base_angle + angle_offset
-            
-            rad = math.radians(angle_deg)
-            bullet_speed = 10
-            dx = bullet_speed * math.cos(rad)
-            dy = -bullet_speed * math.sin(rad) 
+            angle = 2 * math.pi * i / num_bullets
+            dx = math.cos(angle)
+            dy = math.sin(angle)
+            bullet_x = self.player.x + self.player.w / 2 - PLAYER_START_BULLET_W / 2
+            bullet_y = self.player.y
+            # 사방으로 발사하는 총알은 플레이어 총알 속도를 기준으로 하되, 방향을 dx, dy로 조절
+            self.player_bullets.append(PlayerBullet(bullet_x, bullet_y, PLAYER_START_BULLET_W, PLAYER_START_BULLET_H, speedy=dy * PLAYER_BULLET_SPEED, speedx=dx * PLAYER_BULLET_SPEED))
 
-            # PlayerBullet의 __init__에 speedx, speedy를 전달하도록 수정
-            self.bullets.append(PlayerBullet(self.player.x + self.player.w // 2 - 3, self.player.y, 6, 15, speedx=dx, speedy=dy))
+        # 궁극기 이펙트 유지 (색상 반전)
+        pyxel.pal(0, 7)
+        pyxel.pal(7, 0)
+        pyxel.pal(COLOR_BLUE, COLOR_RED)
+        pyxel.pal(COLOR_RED, COLOR_BLUE)
+        self.ultimate_effect_timer = ULTIMATE_EFFECT_DURATION
 
+    def _check_stage_completion(self):
+        if self.boss is None and self.stage_completed:
+            if self.current_stage < 2:
+                self.game_state = "STAGE_CLEAR"
+            else:
+                self.game_state = "GAME_OVER"
 
     def draw(self):
-        pyxel.cls(COLOR_BLACK)
+        # 궁극기 이펙트가 활성화된 동안 배경 색상 변경
+        if self.ultimate_effect_timer > 0:
+            pyxel.cls(COLOR_WHITE if pyxel.frame_count % 4 < 2 else COLOR_BLACK) # 화면 깜빡임 효과
+        elif self.current_stage == 1:
+            pyxel.cls(STAGE1_BACKGROUND_COLOR)
+        elif self.current_stage == 2:
+            pyxel.cls(STAGE2_BACKGROUND_COLOR)
 
-        # 텍스트 중앙 정렬 및 확대 효과 (여러 번 겹쳐 그리기)
-        if not self.game_started:
-            title_text = "1945 Style Shooter"
-            start_text = "Press ENTER to Start"
-            
-            base_x_title = WIDTH // 2 - (len(title_text) * 4) 
-            base_y_title = HEIGHT // 4
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    pyxel.text(base_x_title + dx, base_y_title + dy, title_text, COLOR_LIGHT_GREY if (dx, dy) != (0, 0) else COLOR_WHITE)
 
-            base_x_start = WIDTH // 2 - (len(start_text) * 4)
-            base_y_start = HEIGHT // 2
-            pyxel.text(base_x_start + 1, base_y_start + 1, start_text, COLOR_BLACK) 
-            pyxel.text(base_x_start, base_y_start, start_text, COLOR_WHITE) 
-            
-        elif self.game_over:
-            gameover_text = "GAME OVER"
-            score_text = f"Score: {self.score}"
-            restart_text = "Press 'R' to Restart"
-            
-            base_x_go = WIDTH // 2 - (len(gameover_text) * 4)
-            base_y_go = HEIGHT // 4
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    pyxel.text(base_x_go + dx, base_y_go + dy, gameover_text, COLOR_RED if (dx, dy) != (0, 0) else COLOR_WHITE)
-
-            base_x_score = WIDTH // 2 - (len(score_text) * 4)
-            base_y_score = HEIGHT // 2 - 20
-            pyxel.text(base_x_score, base_y_score, score_text, COLOR_WHITE)
-            
-            base_x_restart = WIDTH // 2 - (len(restart_text) * 4)
-            base_y_restart = HEIGHT // 2 + 40
-            pyxel.text(base_x_restart, base_y_restart, restart_text, COLOR_WHITE)
-
-        else: # 게임 플레이 중
+        if self.game_state == "TITLE":
+            title_text = "1945 Shooter"
+            start_text = "PRESS RETURN TO START"
+            pyxel.text(WIDTH / 2 - len(title_text) * 4 / 2, HEIGHT / 2 - 10, title_text, COLOR_WHITE)
+            pyxel.text(WIDTH / 2 - len(start_text) * 4 / 2, HEIGHT / 2 + 10, start_text, COLOR_YELLOW)
+        elif self.game_state == "PLAYING":
             self.player.draw()
+            for bullet in self.player_bullets:
+                bullet.draw()
             for enemy in self.enemies:
                 enemy.draw()
-            for bullet in self.bullets:
-                bullet.draw()
-            for eb in self.enemy_bullets:
-                eb.draw()
+            for e_bullet in self.enemy_bullets:
+                e_bullet.draw()
             for item in self.items:
                 item.draw()
-            for wing in self.side_wings:
-                wing.draw()
+            if self.boss:
+                self.boss.draw()
 
-            if self.boss_instance and self.boss_instance.active:
-                self.boss_instance.draw()
+            # HUD (Head-Up Display)
+            pyxel.text(5, 5, f"HP: {self.player.hp}", COLOR_GREEN)
+            pyxel.text(5, 15, f"STAGE: {self.current_stage}", COLOR_WHITE)
 
-            # UI 텍스트 그리기
-            score_ui_text = f"Score: {self.score}"
-            power_ui_text = f"P:{self.player.power}"
+            # 궁극기 게이지 표시
+            ultimate_gauge_text = "ULTIMATE (F)"
+            pyxel.text(5, HEIGHT - 20, ultimate_gauge_text, COLOR_WHITE)
+            pyxel.rect(5, HEIGHT - 10, ULTIMATE_GAUGE_MAX, 5, COLOR_BLACK) # 게이지 바 배경
             
-            pyxel.text(WIDTH // 2 - (len(score_ui_text) * 4), 10, score_ui_text, COLOR_WHITE) 
-            self.draw_lives(10, 10, self.player.lives, 3)
-            pyxel.text(WIDTH - (len(power_ui_text) * 8) - 10, 10, power_ui_text, COLOR_ORANGE) 
-
-            # 궁극기 게이지 그리기
-            gauge_width = 100
-            gauge_height = 8
-            gauge_x = WIDTH // 2 - gauge_width // 2
-            gauge_y = HEIGHT - 20
-            fill_width = (self.player.ultimate_gauge / self.player.ultimate_max_gauge) * gauge_width
-            
-            pyxel.rect(gauge_x, gauge_y, fill_width, gauge_height, COLOR_ULTIMATE) # 채워진 부분
-            pyxel.rectb(gauge_x, gauge_y, gauge_width, gauge_height, COLOR_WHITE) # 테두리
-            pyxel.text(gauge_x + gauge_width // 2 - 16, gauge_y - 10, "ULT", COLOR_WHITE)
-
-
-            if self.boss_instance and self.boss_instance.active and self.boss_instance.state == "ATTACKING":
-                bar_length = 200
-                bar_height = 8
-                # 보스의 최대 HP를 기준으로 HP 바 길이를 계산해야 합니다.
-                boss_max_hp = 0
-                if self.boss_instance.boss_type == 1: boss_max_hp = 1000
-                elif self.boss_instance.boss_type == 2: boss_max_hp = 1500
-                elif self.boss_instance.boss_type == 3: boss_max_hp = 2000
-                
-                fill = (self.boss_instance.hp / boss_max_hp) * bar_length 
-                
-                pyxel.rect(WIDTH // 2 - bar_length // 2, 20, fill, bar_height, COLOR_GREEN)
-                pyxel.rectb(WIDTH // 2 - bar_length // 2, 20, bar_length, bar_height, COLOR_WHITE)
-
-    def draw_lives(self, x, y, lives, max_lives):
-        for i in range(max_lives):
-            if i < lives:
-                pyxel.rect(x + i * 20, y, 15, 10, COLOR_GREEN)
+            # 궁극기 게이지 가득 차면 깜빡임 효과
+            if self.ultimate_gauge >= ULTIMATE_GAUGE_MAX and pyxel.frame_count % 10 < 5:
+                pyxel.rect(5, HEIGHT - 10, self.ultimate_gauge, 5, COLOR_WHITE) # 흰색으로 깜빡
             else:
-                pyxel.rectb(x + i * 20, y, 15, 10, COLOR_LIGHT_GREY)
+                pyxel.rect(5, HEIGHT - 10, self.ultimate_gauge, 5, COLOR_ULTIMATE_GAUGE) # 원래 색상
+
+            # 궁극기 발동 시 메시지 표시
+            if self.ultimate_effect_timer > 0:
+                ultimate_message = "ULTIMATE!"
+                pyxel.text(WIDTH / 2 - len(ultimate_message) * 4 / 2, HEIGHT / 2 - 20, ultimate_message, COLOR_YELLOW)
 
 
-if __name__ == "__main__":
-    Game()
+            current_stage_enemies_limit = 0
+            if self.current_stage == 1:
+                current_stage_enemies_limit = STAGE1_ENEMY_COUNT
+            elif self.current_stage == 2:
+                current_stage_enemies_limit = STAGE2_ENEMY_COUNT
+
+            if self.boss is None and self.enemies_spawned_this_stage < current_stage_enemies_limit:
+                enemies_remaining_text = f"ENEMIES REMAINING: {current_stage_enemies_limit - self.enemies_spawned_this_stage}"
+                pyxel.text(WIDTH - len(enemies_remaining_text) * 4 - 5, 5, enemies_remaining_text, COLOR_WHITE)
+            elif self.boss and self.boss.is_alive:
+                boss_active_text = "BOSS ACTIVE"
+                pyxel.text(WIDTH - len(boss_active_text) * 4 - 5, 15, boss_active_text, COLOR_RED)
+
+
+        elif self.game_state == "GAME_OVER":
+            game_over_text = "GAME OVER"
+            restart_text = "PRESS RETURN TO RESTART"
+            pyxel.text(WIDTH / 2 - len(game_over_text) * 4 / 2, HEIGHT / 2 - 10, game_over_text, COLOR_RED)
+            pyxel.text(WIDTH / 2 - len(restart_text) * 4 / 2, HEIGHT / 2 + 10, restart_text, COLOR_YELLOW)
+        elif self.game_state == "STAGE_CLEAR":
+            stage_clear_text = f"STAGE {self.current_stage} CLEAR!" # 현재 스테이지 +1이 아니라 현재 스테이지 번호가 나오도록 수정
+            next_stage_text = "PRESS RETURN FOR NEXT STAGE"
+            if self.current_stage == 2: # 마지막 스테이지 클리어 시
+                next_stage_text = "PRESS RETURN TO RESTART" # 재시작 메시지로 변경
+            pyxel.text(WIDTH / 2 - len(stage_clear_text) * 4 / 2, HEIGHT / 2 - 10, stage_clear_text, COLOR_GREEN)
+            pyxel.text(WIDTH / 2 - len(next_stage_text) * 4 / 2, HEIGHT / 2 + 10, next_stage_text, COLOR_YELLOW)
+
+Game()

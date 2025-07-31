@@ -1,168 +1,311 @@
-# Enemy 및 Boss 클래스
-
 # enemy.py
+
 import pyxel
 import random
 import math
-from config import WIDTH, HEIGHT, FPS, COLOR_RED, COLOR_BOSS, COLOR_PURPLE, COLOR_CYAN
-from bullet import EnemyBullet # EnemyBullet 클래스 임포트
+# config.py 에 정의된 상수 사용을 위해 주석 처리 (main.py에 포함 시)
+from config import * # bullet.py 에 정의된 클래스 사용을 위해 주석 처리 (main.py에 포함 시)
+
+from bullet import *
 
 class Enemy:
-    def __init__(self, game_ref):
-        self.game = game_ref 
-        self.w = 40
-        self.h = 30
-        self.x = random.randrange(WIDTH - self.w)
-        self.y = random.randrange(-100, -40)
-        self.speedy = random.randrange(1, 4)
-        self.speedx = random.choice([-1, 1]) * random.randrange(0, 2) 
-        self.shoot_delay = random.randrange(1000, 3000)
-        self.last_shot = pyxel.frame_count * (1000 / FPS)
-        self.active = True
-        self.hp = 10 # 적 체력 추가
+    def __init__(self, x, y, type_id, player_ref):
+        self.x = x
+        self.y = y
+        self.type_id = type_id
+        self.player_ref = player_ref
+        self.fire_timer = 0
+        self.is_alive = True
 
-    def update(self):
-        if not self.active: return
+        if type_id == "A":
+            self.hp = ENEMY_TYPE_A_HP
+            self.color = ENEMY_TYPE_A_COLOR
+            self.speed = ENEMY_TYPE_A_SPEED
+            self.fire_rate = ENEMY_TYPE_A_FIRE_RATE
+            self.w = ENEMY_TYPE_A_WIDTH
+            self.h = ENEMY_TYPE_A_HEIGHT
+            self.move_pattern = self._move_straight
+            self.attack_pattern = self._attack_simple
+        elif type_id == "B":
+            self.hp = ENEMY_TYPE_B_HP
+            self.color = ENEMY_TYPE_B_COLOR
+            self.speed = ENEMY_TYPE_B_SPEED
+            self.fire_rate = ENEMY_TYPE_B_FIRE_RATE
+            self.w = ENEMY_TYPE_B_WIDTH
+            self.h = ENEMY_TYPE_B_HEIGHT
+            self.move_pattern = self._move_straight
+            self.attack_pattern = self._attack_spread_aimed_wider # 새로운 패턴 유지
+        elif type_id == "C":
+            self.hp = ENEMY_TYPE_C_HP
+            self.color = ENEMY_TYPE_C_COLOR
+            self.speed = ENEMY_TYPE_C_SPEED
+            self.fire_rate = ENEMY_TYPE_C_FIRE_RATE
+            self.w = ENEMY_TYPE_C_WIDTH
+            self.h = ENEMY_TYPE_C_HEIGHT
+            self.initial_x = x
+            self.move_pattern = self._move_zigzag
+            self.attack_pattern = self._attack_none
+        elif type_id == "D":
+            self.hp = ENEMY_TYPE_D_HP
+            self.color = COLOR_RED
+            self.speed = 0.5
+            self.fire_rate = ENEMY_TYPE_D_FIRE_RATE
+            self.w = ENEMY_TYPE_D_WIDTH
+            self.h = ENEMY_TYPE_D_HEIGHT
+            self.move_pattern = self._move_chase
+            self.attack_pattern = self._attack_spread_aimed_sparser # 새로운 패턴 유지
+        else:
+            self.hp = 1
+            self.color = COLOR_RED
+            self.speed = 1
+            self.fire_rate = 60
+            self.w = ENEMY_SIZE
+            self.h = ENEMY_SIZE
+            self.move_pattern = self._move_straight
+            self.attack_pattern = self._attack_simple
 
-        self.y += self.speedy
-        self.x += self.speedx 
+    def update(self, player_x, player_y):
+        if not self.is_alive:
+            return []
 
-        if self.x < 0 or self.x + self.w > WIDTH:
-            self.speedx *= -1
-
-        if self.y > HEIGHT + 10 or self.x < -self.w or self.x > WIDTH + self.w: # 화면 밖으로 완전히 벗어나면
-            self.reset()
-            
-        now = pyxel.frame_count * (1000 / FPS)
-        if now - self.last_shot > self.shoot_delay:
-            self.last_shot = now
-            # 플레이어를 향해 총알 발사하도록 각도 계산
-            player_center_x = self.game.player.x + self.game.player.w // 2
-            player_center_y = self.game.player.y + self.game.player.h // 2
-            
-            enemy_center_x = self.x + self.w // 2
-            enemy_center_y = self.y + self.h // 2
-            
-            # 플레이어와 적 사이의 벡터 계산
-            dx = player_center_x - enemy_center_x
-            dy = player_center_y - enemy_center_y
-            
-            # 각도 계산 (라디안)
-            angle = math.atan2(dy, dx)
-            
-            # 총알 속도
-            bullet_speed = 5
-            speed_x = bullet_speed * math.cos(angle)
-            speed_y = bullet_speed * math.sin(angle)
-            
-            self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h, speed_x, speed_y))
-
-    def reset(self):
-        self.x = random.randrange(WIDTH - self.w)
-        self.y = random.randrange(-100, -40)
-        self.speedy = random.randrange(1, 4)
-        self.speedx = random.choice([-1, 1]) * random.randrange(0, 2) 
-        self.active = True
-        self.hp = 10 # 체력 재설정
+        self.move_pattern(player_x, player_y)
+        self.fire_timer += 1
+        bullets = []
+        if self.fire_timer >= self.fire_rate:
+            bullets = self.attack_pattern(player_x, player_y)
+            if not isinstance(bullets, list):
+                bullets = []
+            bullets = [b for b in bullets if b.active]
+            self.fire_timer = 0 # 총알 발사 후 타이머 리셋
+        return bullets
 
     def draw(self):
-        if self.active:
-            pyxel.rect(self.x, self.y, self.w, self.h, COLOR_RED)
+        if not self.is_alive:
+            return
+
+        pyxel.rect(self.x, self.y, self.w, self.h, self.color)
+
+    def take_damage(self, amount):
+        self.hp -= amount
+        if self.hp <= 0:
+            self.is_alive = False
+
+    # --- Movement Patterns ---
+    def _move_straight(self, player_x, player_y):
+        self.y += self.speed
+        if self.y > HEIGHT:
+            self.is_alive = False
+
+    def _move_zigzag(self, player_x, player_y):
+        self.y += self.speed
+        self.x = self.initial_x + ENEMY_TYPE_C_ZIGZAG_AMPLITUDE * math.sin(pyxel.frame_count / ENEMY_TYPE_C_ZIGZAG_FREQUENCY)
+        if self.y > HEIGHT:
+            self.is_alive = False
+
+    def _move_chase(self, player_x, player_y):
+        if self.y < HEIGHT / 3:
+            self.y += self.speed
+        else:
+            angle = math.atan2(player_y - self.y, player_x - self.x)
+            self.x += math.cos(angle) * self.speed
+            self.y += math.sin(angle) * self.speed
+
+        if self.y > HEIGHT + self.h:
+            self.is_alive = False
+
+    # --- Attack Patterns ---
+    def _attack_simple(self, player_x, player_y):
+        return [EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, bullet_type="straight", speed=ENEMY_BULLET_SPEED)]
+
+    def _attack_aimed(self, player_x, player_y):
+        target_x = player_x + self.player_ref.w / 2
+        target_y = player_y + self.player_ref.h / 2
+        return [EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, bullet_type="aimed", target_x=target_x, target_y=target_y, speed=ENEMY_BULLET_SPEED)]
+
+    def _attack_none(self, player_x, player_y):
+        return []
+
+    # 새로운 넓은 간격의 조준 스프레드 공격 패턴 (B 타입용, 확산 각도 유지)
+    def _attack_spread_aimed_wider(self, player_x, player_y):
+        bullets = []
+        num_bullets = 3 # 쏠 총알 개수 유지
+        spread_angle = math.pi / 3 # 전체 확산 각도 유지 (60도)
+        
+        # 플레이어를 향하는 기본 각도 계산
+        base_angle = math.atan2(player_y - (self.y + self.h), player_x - (self.x + self.w / 2))
+
+        for i in range(num_bullets):
+            # 총알 간 간격을 균등하게 배분
+            angle_offset = -spread_angle / 2 + (i / (num_bullets - 1)) * spread_angle if num_bullets > 1 else 0
+            
+            current_angle = base_angle + angle_offset
+            
+            # 총알이 목표 지점까지 정확히 조준되도록 임의의 먼 거리 (1000) 설정
+            dx = math.cos(current_angle)
+            dy = math.sin(current_angle)
+            
+            bullets.append(EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, 
+                                       bullet_type="aimed", 
+                                       target_x=self.x + dx * 1000, 
+                                       target_y=self.y + dy * 1000, 
+                                       speed=ENEMY_BULLET_SPEED))
+        return bullets
+
+    # 더 적은 총알로 더 듬성듬성한 조준 스프레드 공격 패턴 (D 타입용, 확산 각도 유지)
+    def _attack_spread_aimed_sparser(self, player_x, player_y):
+        bullets = []
+        num_bullets = 2 # 쏠 총알 개수 유지
+        spread_angle = math.pi / 2 # 전체 확산 각도 유지 (90도)
+        
+        base_angle = math.atan2(player_y - (self.y + self.h), player_x - (self.x + self.w / 2))
+
+        for i in range(num_bullets):
+            angle_offset = -spread_angle / 2 + (i / (num_bullets - 1)) * spread_angle if num_bullets > 1 else 0
+            
+            current_angle = base_angle + angle_offset
+            
+            dx = math.cos(current_angle)
+            dy = math.sin(current_angle)
+            
+            bullets.append(EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, 
+                                       bullet_type="aimed", 
+                                       target_x=self.x + dx * 1000, 
+                                       target_y=self.y + dy * 1000, 
+                                       speed=ENEMY_BULLET_SPEED))
+        return bullets
 
 
 class Boss:
-    def __init__(self, game_ref, boss_type=1): # 보스 타입 인자 추가
-        self.game = game_ref 
-        self.boss_type = boss_type
-        self.w = 150
-        self.h = 150
-        self.x = (WIDTH - self.w) // 2
-        self.y = -200
-        self.speedy = 1
-        self.speedx = 2
-        self.shoot_delay = 500
-        self.last_shot = pyxel.frame_count * (1000 / FPS)
-        self.state = "DESCENDING"
-        self.active = True
+    def __init__(self, x, y, player_ref):
+        self.x = x
+        self.y = y
+        self.w = BOSS_WIDTH
+        self.h = BOSS_HEIGHT
+        self.hp = BOSS_HP
+        self.max_hp = BOSS_HP
+        self.color = BOSS_COLOR
+        self.is_alive = True
+        self.player_ref = player_ref
 
-        # 보스 타입에 따른 설정
-        if self.boss_type == 1:
-            self.hp = 1000
-            self.color = COLOR_BOSS # 기본 빨간색 보스
-            self.shoot_delay = 500
-        elif self.boss_type == 2:
-            self.hp = 1500
-            self.color = COLOR_PURPLE # 보라색 보스
-            self.shoot_delay = 400
-            self.speedx = 3 # 좀 더 빠름
-        elif self.boss_type == 3:
-            self.hp = 2000
-            self.color = COLOR_CYAN # 청록색 보스
-            self.shoot_delay = 300
-            self.speedx = 4 # 더 빠름
-        # TODO: 더 많은 보스 타입과 패턴 추가 가능
+        self.phase = 1
+        self.fire_timer = 0
+        self.fire_rate = 60
+        self.minion_spawn_timer = 0
+        self.minion_spawn_rate = 180
+
+        self.weak_point_w = self.w / 4
+        self.weak_point_h = self.h / 4
+        self.weak_point_x = self.x + self.w / 2 - self.weak_point_w / 2
+        self.weak_point_y = self.y + self.h - self.weak_point_h - 5
+        self.weak_point_color = COLOR_WHITE
+
+        self.initial_y = y
 
     def update(self):
-        if not self.active: return
+        if not self.is_alive:
+            return [], []
 
-        current_time_ms = pyxel.frame_count * (1000 / FPS)
+        self.weak_point_x = self.x + self.w / 2 - self.weak_point_w / 2
+        self.weak_point_y = self.y + self.h - self.weak_point_h - 5
 
-        if self.state == "DESCENDING":
-            self.y += self.speedy
-            if self.y >= 50:
-                self.state = "ATTACKING"
-                self.speedy = 0
-        elif self.state == "ATTACKING":
-            self.x += self.speedx
-            if self.x < 0 or self.x + self.w > WIDTH:
-                self.speedx *= -1
+        self._update_phase()
+        self._move_pattern()
 
-            now = pyxel.frame_count * (1000 / FPS)
-            if now - self.last_shot > self.shoot_delay:
-                self.last_shot = now
-                self.shoot()
-        
-        elif self.state == "DEFEATED":
-            self.active = False
+        self.fire_timer += 1
+        new_bullets = []
+        if self.fire_timer >= self.fire_rate:
+            bullets = self._attack_pattern()
+            if not isinstance(bullets, list):
+                bullets = []
+            new_bullets.extend(bullets)
+            self.fire_timer = 0
 
-    def shoot(self):
-        bullet_speed = 3
-        # 보스 타입에 따른 총알 패턴
-        if self.boss_type == 1:
-            # 8방향 기본 패턴
-            angles = [0, 45, 90, 135, 180, 225, 270, 315]
-            for angle_deg in angles:
-                rad = math.radians(angle_deg)
-                dx = bullet_speed * math.cos(rad)
-                dy = bullet_speed * math.sin(rad)
-                self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
-        elif self.boss_type == 2:
-            # 플레이어를 조준하는 샷 + 3방향 확산
-            player_center_x = self.game.player.x + self.game.player.w // 2
-            player_center_y = self.game.player.y + self.game.player.h // 2
-            
-            boss_center_x = self.x + self.w // 2
-            boss_center_y = self.y + self.h // 2
-            
-            target_angle = math.atan2(player_center_y - boss_center_y, player_center_x - boss_center_x)
-            
-            spread_angles = [-15, 0, 15] # 3방향 확산
-            for offset_deg in spread_angles:
-                angle_rad = target_angle + math.radians(offset_deg)
-                dx = bullet_speed * math.cos(angle_rad)
-                dy = bullet_speed * math.sin(angle_rad)
-                self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
-        elif self.boss_type == 3:
-            # 회전하며 샷 발사 (시간에 따라 각도 변화)
-            num_bullets = 8
-            base_angle_offset = (pyxel.frame_count * 5) % 360 # 프레임에 따라 각도 회전
-            for i in range(num_bullets):
-                angle_deg = (360 / num_bullets * i + base_angle_offset) % 360
-                rad = math.radians(angle_deg)
-                dx = bullet_speed * math.cos(rad)
-                dy = bullet_speed * math.sin(rad)
-                self.game.enemy_bullets.append(EnemyBullet(self.x + self.w // 2 - 3, self.y + self.h // 2 - 6, dx, dy))
+        self.minion_spawn_timer += 1
+        new_enemies = []
+        if self.minion_spawn_timer >= self.minion_spawn_rate:
+            enemies = self._spawn_minions()
+            if not isinstance(enemies, list):
+                enemies = []
+            new_enemies.extend(enemies)
+            self.minion_spawn_timer = 0
+
+        return new_bullets, new_enemies
 
     def draw(self):
-        if self.active:
-            pyxel.rect(self.x, self.y, self.w, self.h, self.color) # 보스 색상 적용
+        if not self.is_alive:
+            return
+
+        pyxel.rect(self.x, self.y, self.w, self.h, self.color)
+        pyxel.rect(self.weak_point_x, self.weak_point_y, self.weak_point_w, self.weak_point_h, self.weak_point_color)
+
+        hp_bar_width = (self.hp / self.max_hp) * self.w
+        pyxel.rect(self.x, self.y - 5, hp_bar_width, 3, COLOR_GREEN)
+
+    def take_damage(self, amount, is_weak_point_hit=False):
+        if is_weak_point_hit:
+            self.hp -= amount * 2
+            pyxel.text(self.x + self.w/2 - len("CRIT!")*2, self.y + self.h/2, "CRIT!", COLOR_YELLOW)
+        else:
+            self.hp -= amount
+
+        if self.hp <= 0:
+            self.is_alive = False
+
+    # --- Phase System ---
+    def _update_phase(self):
+        if self.hp <= BOSS_PHASE2_HP_THRESHOLD and self.phase < 3:
+            self.phase = 3
+            self.fire_rate = 30
+            self.minion_spawn_rate = 90
+            self.color = COLOR_RED
+        elif self.hp <= BOSS_PHASE1_HP_THRESHOLD and self.phase < 2:
+            self.phase = 2
+            self.fire_rate = 45
+            self.color = COLOR_ORANGE
+
+    # --- Boss Movement Patterns ---
+    def _move_pattern(self):
+        if self.phase == 1:
+            self.x = (WIDTH / 2) + 60 * math.sin(pyxel.frame_count * 0.02) - self.w / 2
+        elif self.phase >= 2:
+            self.x = (WIDTH / 2) + 80 * math.sin(pyxel.frame_count * 0.04) - self.w / 2
+            self.y = self.initial_y + 10 * math.sin(pyxel.frame_count * 0.03)
+
+    # --- Boss Attack Patterns ---
+    def _attack_pattern(self):
+        bullets = []
+        # 페이즈 1: 단일 조준 총알 (유지)
+        if self.phase == 1:
+            target_x = self.player_ref.x + self.player_ref.w / 2
+            target_y = self.player_ref.y + self.player_ref.h / 2
+            bullets.append(EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, bullet_type="aimed", target_x=target_x, target_y=target_y, speed=ENEMY_BULLET_SPEED * 1.5))
+        
+        # 페이즈 2: 부채꼴 총알 발사 수 증가 및 각도 간격 조정
+        elif self.phase == 2:
+            for i in range(-3, 4): # 총 7발 (원래 5발)
+                angle_offset = i * math.pi / 12 # 각도 간격 약간 감소 (원래 pi/10 -> pi/5에서 pi/12로 변경)
+                
+                target_x = self.player_ref.x + self.player_ref.w / 2
+                target_y = self.player_ref.y + self.player_ref.h / 2
+                angle = math.atan2(target_y - (self.y + self.h), target_x - (self.x + self.w / 2)) + angle_offset
+                dx = math.cos(angle)
+                dy = math.sin(angle)
+                bullets.append(EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, bullet_type="aimed", target_x=self.x + dx * 100, target_y=self.y + dy * 100, speed=ENEMY_BULLET_SPEED * 1.5))
+        
+        # 페이즈 3: 원형 총알 발사 수 증가
+        elif self.phase == 3:
+            for i in range(8): # 총 8발 (원래 4발 -> 다시 8발)
+                angle = pyxel.frame_count * 0.1 + i * (math.pi * 2 / 8) # 8 유지 (더 촘촘하게)
+                dx = math.cos(angle)
+                dy = math.sin(angle)
+                bullets.append(EnemyBullet(self.x + self.w / 2 - ENEMY_BULLET_WIDTH/2, self.y + self.h, bullet_type="aimed", target_x=self.x + dx * 100, target_y=self.y + dy * 100, speed=ENEMY_BULLET_SPEED * 2))
+
+        return bullets
+
+    # --- Minion Spawning (유지) ---
+    def _spawn_minions(self):
+        enemies = []
+        if self.phase >= 2:
+            enemies.append(Enemy(self.x + self.w/4, self.y + self.h, "A", self.player_ref))
+            enemies.append(Enemy(self.x + self.w*3/4, self.y + self.h, "B", self.player_ref))
+        return enemies
